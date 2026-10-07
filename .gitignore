@@ -1,0 +1,8 @@
+# Claude Code's own type declarations, written by the engine and /plugin-types
+.claude/
+.claude-plugin/types/
+
+# Local previews and scratch output
+assets/preview.html
+*.tmp
+node_modules/

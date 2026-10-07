@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="190" viewBox="0 0 1240 190" font-family="Cascadia Mono, Consolas, Menlo, monospace" font-size="17">
+  <title>usage-band in the terminal (same layout as the optional CLI status line)</title>
+  <rect width="1240" height="190" rx="10" fill="#0c0c0c"/>
+  <circle cx="22" cy="20" r="6" fill="#ff5f57"/><circle cx="42" cy="20" r="6" fill="#febc2e"/><circle cx="62" cy="20" r="6" fill="#28c840"/>
+
+  <text x="24" y="62" xml:space="preserve"><tspan font-weight="700" fill="#2ec4d6">◆ Opus 5.5</tspan><tspan fill="#6b6b6b"> │ </tspan><tspan fill="#bcbcbc">my-project</tspan><tspan fill="#6b6b6b"> │ </tspan><tspan fill="#bcbcbc">session $4.20</tspan><tspan fill="#6b6b6b"> │ </tspan><tspan font-weight="700" fill="#d670d6">⚡ 64% of 7d quota unused — go build something!</tspan></text>
+
+  <!-- Claude column -->
+  <text x="24" y="96" xml:space="preserve"><tspan font-weight="700" fill="#e6e6e6">ctx </tspan><tspan fill="#3fbf6f">██████</tspan><tspan fill="#4a4a4a">░░░░░░░░░░░░░░</tspan><tspan fill="#e6e6e6">  31%</tspan><tspan fill="#bcbcbc">  context</tspan></text>
+  <text x="24" y="126" xml:space="preserve"><tspan font-weight="700" fill="#e6e6e6">5h  </tspan><tspan fill="#d9b43f">████████</tspan><tspan fill="#4a4a4a">░░░░░░░░░░░░</tspan><tspan fill="#e6e6e6">  42%</tspan><tspan fill="#bcbcbc">  used ≈ 1.9M of ~4.5M tok  resets in 1h52m</tspan></text>
+  <text x="24" y="156" xml:space="preserve"><tspan font-weight="700" fill="#e6e6e6">7d  </tspan><tspan fill="#d670d6">███████</tspan><tspan fill="#4a4a4a">░░░░░░░░░░░░░</tspan><tspan fill="#e6e6e6">  36%</tspan><tspan fill="#bcbcbc">  used ≈ 9.6M of ~26.7M tok  resets in 4d20h</tspan></text>
+
+  <!-- Codex column, aligned to the matching rows -->
+  <g transform="translate(800,0)">
+    <text x="0" y="96" fill="#6b6b6b">┃</text><text x="0" y="126" fill="#6b6b6b">┃</text><text x="0" y="156" fill="#6b6b6b">┃</text>
+    <text x="22" y="96" xml:space="preserve"><tspan font-weight="700" fill="#3fbf6f">◇ Codex</tspan><tspan fill="#bcbcbc"> plus · seen 6m ago</tspan></text>
+    <text x="22" y="126" xml:space="preserve"><tspan font-weight="700" fill="#e6e6e6">5h </tspan><tspan fill="#3fbf6f">███</tspan><tspan fill="#4a4a4a">░░░░░░░░░</tspan><tspan fill="#e6e6e6">  24%</tspan><tspan fill="#bcbcbc">  resets in 3h05m</tspan></text>
+    <text x="22" y="156" xml:space="preserve"><tspan font-weight="700" fill="#e6e6e6">7d </tspan><tspan fill="#d9b43f">█</tspan><tspan fill="#4a4a4a">░░░░░░░░░░░</tspan><tspan fill="#e6e6e6">  12%</tspan><tspan fill="#bcbcbc">  resets in 4d19h</tspan></text>
+  </g>
+</svg>

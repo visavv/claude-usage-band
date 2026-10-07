@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="318" viewBox="0 0 900 318" font-family="Segoe UI, -apple-system, Helvetica, Arial, sans-serif">
+  <title>Status messages, highest priority first</title>
+  <rect width="900" height="318" rx="14" fill="#262625"/>
+  <text x="40" y="46" font-size="20" font-weight="700" fill="#ecebe8">Status message</text>
+  <text x="208" y="46" font-size="16" fill="#9b9a97">highest priority wins</text>
+
+  <g font-size="17">
+    <!-- 1 urgent -->
+    <rect x="40" y="70" width="482" height="30" rx="3" fill="#e5534b"/>
+    <text x="50" y="91" font-weight="700" fill="#fff">🔥 70% of 5h quota expires in 1h10m — USE IT!</text>
+    <text x="548" y="91" font-size="15" fill="#9b9a97">≥20% left and the reset is close</text>
+    <text x="548" y="111" font-size="15" fill="#9b9a97">(5h: under 90 min, 7d: under 36 h) + a toast</text>
+
+    <!-- 2 switch -->
+    <text x="40" y="150" font-weight="700" fill="#c86fd0">↪ Claude 5h nearly out — switch to Codex (64% left)</text>
+    <text x="548" y="150" font-size="15" fill="#9b9a97">Claude under 10% left, Codex has room</text>
+
+    <!-- 3 behind -->
+    <text x="40" y="190" font-weight="700" fill="#c86fd0">⚡ 58% of 7d quota unused — go build something!</text>
+    <text x="548" y="190" font-size="15" fill="#9b9a97">over 10 points behind pace, ≥20% left</text>
+
+    <!-- 4 on pace -->
+    <text x="40" y="230" fill="#5fae7b">✓ on pace</text>
+    <text x="548" y="230" font-size="15" fill="#9b9a97">nothing to do</text>
+
+    <!-- 5 waiting -->
+    <text x="40" y="270" fill="#9b9a97">quota: waiting for first API response…</text>
+    <text x="548" y="270" font-size="15" fill="#9b9a97">no reading in any chat yet</text>
+  </g>
+</svg>

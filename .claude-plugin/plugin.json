@@ -1,0 +1,11 @@
+{
+  "name": "usage-band",
+  "version": "1.0.0",
+  "description": "Live Claude + Codex quota band above the prompt: context, 5h and 7d windows, token counts, pace and a 7-day plan",
+  "author": { "name": "visavv", "url": "https://github.com/visavv" },
+  "homepage": "https://github.com/visavv/claude-usage-band",
+  "repository": "https://github.com/visavv/claude-usage-band",
+  "license": "MIT",
+  "keywords": ["usage", "quota", "rate-limit", "status-line", "codex"],
+  "types": "./types/index.d.ts"
+}
