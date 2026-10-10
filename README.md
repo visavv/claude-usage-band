@@ -30,17 +30,18 @@ In the terminal it uses the same layout as a classic status line:
 - **Always the freshest figure.** Chats on the same model share its quota, so every chat saves its readings
   and each window shows the newest one any chat on that model has seen ("latest reading 2m ago"). A chat you
   return to is never stuck on the numbers from its last reply.
-- **Per-model weeks, Fable first.** Fable has a weekly quota of its own. The expanded view lists each
-  model's last weekly reading, and when you are on another model while Fable's week has room it says so
+- **Per-model weeks, Fable first.** Fable has a weekly quota of its own. The expanded view shows each
+  other model's last weekly reading, and when you are on another model while Fable's week has room it says so
   (once per chat as a toast too).
 - **Live updates.** Refreshes every 15 s, whenever the desktop attaches to a chat, and on redraw, so
   countdowns and figures keep moving between turns.
 - **Three sizes on the desktop, one click apart** (the choice is remembered for new chats):
   - **Collapsed:** one line, `◆ 5h 8% · 7d 81%`, plus the status message only when it needs you.
   - **Compact:** the meters and the 7-day plan line (the default).
-  - **Expanded:** adds a **5h plan** counter, one pip per 5h window left before the weekly reset with the
-    filled pips showing how many full windows' worth of the week is left to spend (e.g. 2.1 of 9), and the
-    **by model** row.
+  - **Expanded:** adds one more row of the same meter cells: a **plan** counter (one pip per 5h window
+    left before the weekly reset, filled by how many full windows' worth of the week is left to spend,
+    e.g. `2.1/9`) and each other model's last weekly reading.
+  - Switch with the small `▾` / `▴` / `–` buttons at the right of the first line.
 - **Terminal layout.** The classic character-bar layout, like the optional CLI status line.
 - **`/quota` pane** with the full view and a button to hide or show the band.
 - **Quiet in scripts.** Headless runs (`claude -p`, tests, automation) skip the scanner, timers and toasts.

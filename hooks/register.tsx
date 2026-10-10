@@ -162,14 +162,7 @@ async function refresh($: $) {
   }
   const shared = await readModels($)
   try {
-    const own = snap(await $.session.usage())
-    // Chats on the same model family share its quota, so the newest reading any of them saw is the
-    // truth: a chat you switch back to shows that, not what it saw at its own last reply. Families
-    // are kept apart because Fable has a weekly quota of its own.
-    const same = shared[family((await read($, meta)).model)]
-    const merged = freshestLimits({ at: ownAt, limits: own.rateLimits }, same ? [same] : [])
-    const next: ClaudeSnap = { ...own, rateLimits: merged.limits, borrowedAt: merged.borrowedAt }
-    await update($, claude, () => next)
+    await showReading($, snap(await $.session.usage()), shared)
   } catch (err) {
     errors.push(`session.usage: ${errText(err)}`)
   }
@@ -190,6 +183,16 @@ async function refresh($: $) {
 async function setView($: $, mode: ViewMode) {
   await update($, viewMode, () => mode)
   await $.store.set('view', mode).catch(() => undefined)
+}
+
+// Chats on the same model family share its quota, so the newest reading any of them saw is the truth:
+// a chat you switch back to (or a new one before its first reply) shows that, not an empty or old
+// figure of its own. Families are kept apart because Fable has a weekly quota of its own.
+async function showReading($: $, own: ClaudeSnap, shared?: ModelReadings) {
+  const all = shared ?? (await read($, models))
+  const same = all[family((await read($, meta)).model)]
+  const merged = freshestLimits({ at: ownAt, limits: own.rateLimits }, same ? [same] : [])
+  await update($, claude, () => ({ ...own, rateLimits: merged.limits, borrowedAt: merged.borrowedAt }))
 }
 
 // Reads every atom the drawing depends on (the `now` tick included), so a write to any redraws.
@@ -249,7 +252,8 @@ export const register: Register = on => {
       return next(e)
     }
     ensureTicker($)
-    await update($, claude, () => snap(e))
+    // A measurement before the first reply has no rate limits; it must not wipe a borrowed reading.
+    await showReading($, snap(e))
     void maybeScan($).then(() => check($))
 
     return next(e)
@@ -375,16 +379,30 @@ const meterSvg = (b: Bar): string => {
 }
 
 // One quota: `5h [meter] 24%` over its detail line, in a fixed-width cell so cells line up.
-const Meter = (ui: GUI, b: Bar, width: number, label: string, detail: string, labelColor?: string) => (
+const Meter = (
+  ui: GUI,
+  b: Bar,
+  width: number,
+  label: string,
+  detail: string,
+  labelColor?: string,
+  picture?: { svg: string; value: string; alt: string },
+  detailColor = 'gray',
+) => (
   <ui.Box flexDirection="column" width={width} flexShrink={0}>
     <ui.Box flexDirection="row" alignItems="center" columnGap={1}>
       <ui.Box width={4} flexShrink={0}>
-        <ui.Text bold color={labelColor}>{label}</ui.Text>
+        <ui.Text bold color={labelColor} wrap="truncate-end">{label}</ui.Text>
       </ui.Box>
-      <ui.Svg source={meterSvg(b)} alt={`${label} ${Math.round(b.used)}% used`} width={METER.width} height={METER.height} />
-      <ui.Text bold>{`${Math.round(b.used)}%`}</ui.Text>
+      <ui.Svg
+        source={picture?.svg ?? meterSvg(b)}
+        alt={picture?.alt ?? `${label} ${Math.round(b.used)}% used`}
+        width={METER.width}
+        height={METER.height}
+      />
+      <ui.Text bold>{picture?.value ?? `${Math.round(b.used)}%`}</ui.Text>
     </ui.Box>
-    <ui.Text color="gray" wrap="truncate-end">{detail}</ui.Text>
+    <ui.Text color={detailColor} wrap="truncate-end">{detail}</ui.Text>
   </ui.Box>
 )
 
@@ -395,33 +413,35 @@ const planText = (p: Plan): string => {
     : `7d plan: max out every 5h window (${n}) · ~${Math.round(p.wastePct)}% of the week still expires`
 }
 
-// One pip per 5h window left before the weekly reset; filled = full windows' worth of week to spend.
+// One pip per 5h window left before the weekly reset, as wide as a meter; filled = full windows' worth
+// of the week left to spend.
 const pipsSvg = (windows: number, full: number, isFeasible: boolean): string => {
-  const n = Math.max(1, Math.min(40, windows))
-  const w = 9
-  const gap = 3
-  const h = 12
+  const n = Math.max(1, Math.min(24, windows))
+  const { width: w, height: h } = METER
+  const gap = n > 12 ? 1 : 2
+  const pip = (w - gap * (n - 1)) / n
+  const color = isFeasible ? '#d97757' : '#e5534b'
   const cells = Array.from({ length: n }, (_, i) => {
-    const x = i * (w + gap)
+    const x = (i * (pip + gap)).toFixed(1)
     const fill = isFeasible ? Math.max(0, Math.min(1, full - i)) : 1
-    const color = isFeasible ? '#d97757' : '#e5534b'
     return (
-      `<rect x="${x}" y="1" width="${w}" height="${h - 2}" rx="2" fill="#888" fill-opacity="0.3"/>` +
-      (fill > 0 ? `<rect x="${x}" y="1" width="${(w * fill).toFixed(1)}" height="${h - 2}" rx="2" fill="${color}"/>` : '')
+      `<rect x="${x}" y="3" width="${pip.toFixed(1)}" height="6" rx="2" fill="#888" fill-opacity="0.3"/>` +
+      (fill > 0 ? `<rect x="${x}" y="3" width="${(pip * fill).toFixed(1)}" height="6" rx="2" fill="${color}"/>` : '')
     )
   })
-  const width = n * (w + gap) - gap
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}">${cells.join('')}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${cells.join('')}</svg>`
 }
 
-const ViewButtons = (ui: GUI, mode: ViewMode, pick: (mode: ViewMode) => void) => [
-  mode === 'full' ? (
-    <ui.Button key="less" label="Less" plain dimColor onPress={() => pick('compact')} />
-  ) : (
-    <ui.Button key="more" label="More" plain dimColor onPress={() => pick('full')} />
-  ),
-  <ui.Button key="collapse" label="Collapse" plain dimColor onPress={() => pick('mini')} />,
-]
+const ViewButtons = (ui: GUI, mode: ViewMode, pick: (mode: ViewMode) => void) => (
+  <ui.Box flexDirection="row" columnGap={1} flexShrink={0}>
+    {mode === 'full' ? (
+      <ui.Button key="less" label="▴" plain dimColor onPress={() => pick('compact')} />
+    ) : (
+      <ui.Button key="more" label="▾" plain dimColor onPress={() => pick('full')} />
+    )}
+    <ui.Button key="collapse" label="–" plain dimColor onPress={() => pick('mini')} />
+  </ui.Box>
+)
 
 const drawGui = (
   ui: GUI,
@@ -456,17 +476,19 @@ const drawGui = (
       : [b.tok && (b.cap ? `${b.tok} / ${b.cap}` : b.tok), b.resets ? `${b.resets} left` : 'reset'].filter(Boolean).join(' · ')
   const count = view.rows.filter(r => r.left).length + codexBars.length
   // All meters on one row when the band is wide enough for it, else a two-column grid.
-  const oneRow = Math.floor((columns - GAP * (count - 1)) / Math.max(1, count))
+  const oneRow = Math.floor((columns - GAP * (Math.max(4, count) - 1)) / Math.max(4, count))
   const width = oneRow >= 20 ? Math.min(oneRow, 30) : Math.max(20, Math.min(30, Math.floor((columns - GAP) / 2)))
 
   const rows = [
-    <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
-      <Text color="gray">{head}</Text>
-      {statusText(ui, view)}
-      {byModel.borrowed && <Text color="gray" dimColor>{byModel.borrowed}</Text>}
-      {mode === 'compact' && view.plan && (
-        <Text color={!view.plan.isFeasible ? 'red' : view.plan.needPct >= 75 ? 'yellow' : 'gray'}>{planText(view.plan)}</Text>
-      )}
+    <Box flexDirection="row" justifyContent="space-between" columnGap={GAP}>
+      <Box flexDirection="row" flexWrap="wrap" columnGap={GAP} flexShrink={1}>
+        <Text color="gray">{head}</Text>
+        {statusText(ui, view)}
+        {byModel.borrowed && <Text color="gray" dimColor>{byModel.borrowed}</Text>}
+        {mode === 'compact' && view.plan && (
+          <Text color={!view.plan.isFeasible ? 'red' : view.plan.needPct >= 75 ? 'yellow' : 'gray'}>{planText(view.plan)}</Text>
+        )}
+      </Box>
       {ViewButtons(ui, mode, pick)}
     </Box>,
     <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
@@ -478,47 +500,46 @@ const drawGui = (
     </Box>,
   ]
 
+  // Expanded: one more row of the same cells, the 5h plan counter and the other models' weeks.
   if (mode === 'full') {
+    const cells = []
     const plan = view.plan
     if (plan) {
-      const need = plan.isFeasible
-        ? `${plan.fullWindows.toFixed(1)} full 5h windows of week left to spend · ${plan.windows} windows before reset`
-        : `${plan.windows} windows before reset can hold only part of the week · ~${Math.round(plan.wastePct)}% will expire`
-      rows.push(
-        <Box flexDirection="row" alignItems="center" columnGap={1}>
-          <Box width={9} flexShrink={0}>
-            <Text bold>5h plan</Text>
-          </Box>
-          <Svg
-            source={pipsSvg(plan.windows, plan.fullWindows, plan.isFeasible)}
-            alt={`${plan.fullWindows.toFixed(1)} of ${plan.windows} windows`}
-            height={12}
-          />
-          <Text color={!plan.isFeasible ? 'red' : plan.needPct >= 75 ? 'yellow' : 'gray'} wrap="truncate-end">{`  ${need}`}</Text>
-        </Box>,
-      )
-      rows.push(
-        <Text color="gray" wrap="truncate-end">{`          ${planText(plan).replace('7d plan: ', 'to use the whole week: ')}`}</Text>,
+      const tone = !plan.isFeasible ? 'red' : plan.needPct >= 75 ? 'yellow' : 'gray'
+      cells.push(
+        Meter(
+          ui,
+          { label: 'plan', used: 0, color: 'green', width: 0, extra: '' },
+          width,
+          'plan',
+          plan.isFeasible ? `full 5h windows of week to spend` : `~${Math.round(plan.wastePct)}% of the week will expire`,
+          undefined,
+          {
+            svg: pipsSvg(plan.windows, plan.fullWindows, plan.isFeasible),
+            value: `${plan.fullWindows < 10 ? plan.fullWindows.toFixed(1) : Math.round(plan.fullWindows)}/${plan.windows}`,
+            alt: `${plan.fullWindows.toFixed(1)} full 5h windows of the week left to spend, ${plan.windows} windows before the reset`,
+          },
+          tone,
+        ),
       )
     }
-    if (byModel.families.length) {
-      rows.push(
-        <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
-          <Box width={9} flexShrink={0}>
-            <Text bold>by model</Text>
-          </Box>
-          {byModel.families.map(m => (
-            <Box flexDirection="row" flexShrink={0}>
-              <Text color={m.family === 'fable' ? 'magenta' : undefined} bold={m.family === byModel.current}>
-                {`${m.family} 7d ${Math.round(m.used)}%${m.five != null ? ` · 5h ${Math.round(m.five)}%` : ''}`}
-              </Text>
-              <Text color="gray">{` (${m.age} ago)`}</Text>
-            </Box>
-          ))}
-        </Box>,
+    for (const m of byModel.families.filter(f => f.family !== byModel.current)) {
+      const isFable = m.family === 'fable'
+      const hint = isFable && byModel.hint
+      cells.push(
+        Meter(
+          ui,
+          { label: m.family, used: m.used, color: m.used >= 90 ? 'red' : 'green', width: 0, extra: '' },
+          width,
+          m.family.slice(0, 5),
+          hint ? 'use Fable first (/model)' : `${m.five != null ? `5h ${Math.round(m.five)}% · ` : ''}${m.age} ago`,
+          isFable ? 'magenta' : undefined,
+          undefined,
+          hint ? 'magenta' : 'gray',
+        ),
       )
     }
-    if (byModel.hint) rows.push(<Text bold color="magenta">{`◆ ${byModel.hint}`}</Text>)
+    if (cells.length) rows.push(<Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>{cells}</Box>)
   }
 
   if (error) rows.push(<Text color="yellow" dimColor>{`usage-band: ${error}`}</Text>)

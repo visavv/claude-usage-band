@@ -211,18 +211,15 @@ test('the desktop band switches between collapsed, compact and expanded by click
 
   // compact (default): meters, no planning rows
   expect(await ui.find({ key: 'more' })).toBeDefined()
-  expect(await text()).not.toContain('by model')
+  expect(await text()).not.toContain('plan25')
 
   await ui.press({ key: 'more' })
   const full = await text()
-  expect(full).toContain('5h plan')
-  // this fixture's week is out of reach, so the plan row says how much will expire
-  expect(full).toContain('18 windows before reset can hold only part of the week')
-  expect(full).toContain('by model')
-  expect(full).toContain('fable 7d 4% (1m ago)')
-  expect(full).not.toContain('(1m ago) (1m ago)')
-  expect(full).toContain('◆ Fable has 96% of its own week left — use Fable first (/model)')
-  expect((await ui.findAll({ type: 'Svg' })).length).toBe(5)
+  // this fixture's week is out of reach: 25 windows' worth left, 18 windows to spend it in
+  expect(full).toContain('plan25/18~15% of the week will expire')
+  // other models as meter cells; Fable with room says to use it first
+  expect(full).toContain('fable4%use Fable first (/model)')
+  expect((await ui.findAll({ type: 'Svg' })).length).toBe(6)
 
   await ui.press({ key: 'collapse' })
   expect(await ui.find({ key: 'expand' })).toBeDefined()
@@ -231,4 +228,31 @@ test('the desktop band switches between collapsed, compact and expanded by click
   await ui.press({ key: 'expand' })
   expect(await ui.find({ key: 'more' })).toBeDefined()
   await ui.unmount()
+})
+
+test('a measurement before the first reply keeps the reading borrowed from a chat on the same model', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'quota' } }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.cwd', () => ({ value: CWD }))
+  on('env.get', () => ({ value: undefined }))
+  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200_000 }, rateLimits: [] } }))
+  const MODELS = { opus: { at: NOW - 2 * 60e3, limits: [{ kind: 'seven_day', percentUsed: 81, resetsAt: new Date(NOW + 30 * H).toISOString() }] } }
+  on('fs.read', (_, e) => ({ value: JSON.stringify(e.path.endsWith('usage-band-models.json') ? MODELS : CACHE) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  await $.session.start({ cwd: CWD, surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  await $.session.measure({ context: { window: 200_000, tokens: 9_000, percent: 5 }, rateLimits: [], changed: ['context'] })
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+  await ui.unmount()
+  expect(text).toContain('7d81%')
+  expect(text).not.toContain('waiting for first API response')
 })
