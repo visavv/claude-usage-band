@@ -51,6 +51,8 @@ let ticker: { cancel: () => void } | null = null
 let ownAt = 0
 // When a drawing or an attach last asked for a refresh; keeps redraws from flooding it.
 let lastKick = 0
+// Set by ensureTicker; what a drawing calls to ask for a refresh (null until a non-render event ran).
+let refreshSoon: (() => void) | null = null
 
 async function readCache($: $) {
   try {
@@ -101,6 +103,8 @@ async function kick($: $) {
 function ensureTicker($: $) {
   if (ticker) return
   ticker = $.clock.every(15_000, () => void refresh($))
+  // Bound to this event's $, never a drawing's: the engine refuses writes that a ui.render started.
+  refreshSoon = () => void $.clock.after(0, () => void kick($))
 }
 
 async function readMeta($: $) {
@@ -170,7 +174,8 @@ async function refresh($: $) {
   } catch (err) {
     errors.push(`refresh: ${errText(err)}`)
   }
-  if (errors.length) await update($, scanError, () => errors.join(' · '))
+  const mine = /^(session\.|refresh:)/
+  await update($, scanError, err => (errors.length ? errors.join(' · ') : err && mine.test(err) ? null : err))
 }
 
 // Reads every atom the drawing depends on (the `now` tick included), so a write to any redraws.
@@ -257,7 +262,7 @@ export const register: Register = on => {
       return next(e)
     }
     // A drawing may not write state, so the refresh runs on the clock right after it.
-    if ((await $.clock.now()) - lastKick >= 5_000) $.clock.after(0, () => void kick($))
+    if ((await $.clock.now()) - lastKick >= 5_000) refreshSoon?.()
     const ui = $.ui.resolve(e)
     // A failure while drawing must show as a line, never as a missing band.
     try {
@@ -354,7 +359,7 @@ const Meter = (ui: GUI, b: Bar, width: number, label: string, detail: string, la
       <ui.Svg source={meterSvg(b)} alt={`${label} ${Math.round(b.used)}% used`} width={METER.width} height={METER.height} />
       <ui.Text bold>{`${Math.round(b.used)}%`}</ui.Text>
     </ui.Box>
-    <ui.Text color="gray">{detail}</ui.Text>
+    <ui.Text color="gray" wrap="truncate-end">{detail}</ui.Text>
   </ui.Box>
 )
 
@@ -377,7 +382,7 @@ const drawGui = (ui: GUI, view: View, error: string | null, columns: number, byM
   const count = view.rows.filter(r => r.left).length + codexBars.length
   // All meters on one row when the band is wide enough for it, else a two-column grid.
   const oneRow = Math.floor((columns - GAP * (count - 1)) / Math.max(1, count))
-  const width = oneRow >= 20 ? Math.min(oneRow, 26) : Math.max(20, Math.min(30, Math.floor((columns - GAP) / 2)))
+  const width = oneRow >= 20 ? Math.min(oneRow, 30) : Math.max(20, Math.min(30, Math.floor((columns - GAP) / 2)))
 
   return [
     <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>

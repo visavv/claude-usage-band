@@ -151,3 +151,31 @@ test('a newer reading from another chat replaces a stale one, and a redraw refre
   await clock.advance(1)
   expect(usageReads).toBeGreaterThan(before)
 })
+
+test('an error left by a failed refresh clears once a refresh succeeds', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  let failModel = true
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'quota' } }))
+  on('session.model', () => (failModel ? { deny: 'not now' } : { value: 'claude-opus-5-5' }))
+  on('session.cwd', () => ({ value: CWD }))
+  on('env.get', () => ({ value: undefined }))
+  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200_000 }, rateLimits: [] } }))
+  on('fs.read', () => ({ value: JSON.stringify(CACHE) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+
+  await $.session.start({ cwd: CWD, surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  const draw = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+    await ui.unmount()
+    return text
+  }
+  expect(await draw()).toContain('usage-band: session.model/cwd')
+
+  failModel = false
+  await clock.advance(15_000)
+  expect(await draw()).not.toContain('usage-band: session.model/cwd')
+})
