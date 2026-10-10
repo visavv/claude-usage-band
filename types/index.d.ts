@@ -25,6 +25,9 @@ export type ModelReadings = Record<string, { at: number; limits: ClaudeLimit[] }
 
 export type Meta = { model: string; folder: string }
 
+/** How much the desktop band shows: one line, today's meters, or meters plus the planning rows. */
+export type ViewMode = 'mini' | 'compact' | 'full'
+
 declare module 'claude-code' {
   interface PluginState {
     'usage-band': {
@@ -36,6 +39,7 @@ declare module 'claude-code' {
       toasted: string[]
       scanError: string | null
       models: ModelReadings
+      view: ViewMode
     }
   }
 }

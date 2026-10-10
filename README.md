@@ -27,12 +27,21 @@ In the terminal it uses the same layout as a classic status line:
   once when a window first turns urgent.
 - **Codex aware.** Reads your latest Codex rate limits from Codex's own session logs and suggests switching
   when Claude is nearly out and Codex has room.
-- **Always the freshest figure.** All chats share one quota, so every chat saves its readings and each window
-  shows the newest one any chat has seen ("latest reading 2m ago"). A chat you return to is never stuck on
-  the numbers from its last reply.
+- **Always the freshest figure.** Chats on the same model share its quota, so every chat saves its readings
+  and each window shows the newest one any chat on that model has seen ("latest reading 2m ago"). A chat you
+  return to is never stuck on the numbers from its last reply.
+- **Per-model weeks, Fable first.** Fable has a weekly quota of its own. The expanded view lists each
+  model's last weekly reading, and when you are on another model while Fable's week has room it says so
+  (once per chat as a toast too).
 - **Live updates.** Refreshes every 15 s, whenever the desktop attaches to a chat, and on redraw, so
   countdowns and figures keep moving between turns.
-- **Two layouts.** Drawn meters on the desktop; the classic character-bar layout in the terminal.
+- **Three sizes on the desktop, one click apart** (the choice is remembered for new chats):
+  - **Collapsed:** one line, `◆ 5h 8% · 7d 81%`, plus the status message only when it needs you.
+  - **Compact:** the meters and the 7-day plan line (the default).
+  - **Expanded:** adds a **5h plan** counter, one pip per 5h window left before the weekly reset with the
+    filled pips showing how many full windows' worth of the week is left to spend (e.g. 2.1 of 9), and the
+    **by model** row.
+- **Terminal layout.** The classic character-bar layout, like the optional CLI status line.
 - **`/quota` pane** with the full view and a button to hide or show the band.
 - **Quiet in scripts.** Headless runs (`claude -p`, tests, automation) skip the scanner, timers and toasts.
 
@@ -147,7 +156,8 @@ For type-checking, run `/plugin-types` in a Claude Code session to write the eng
 
 ## Known limits
 
-- Claude Code reports quota per account, not per model; all models share the same windows.
+- Each chat only reports the quota of the model it runs. Another model's figures come from the last chat
+  that used it, and are shown with their age.
 - The desktop draws each meter as a static image. Animated meters would need a sandboxed frame, which the
   desktop paints with a white background.
 - A chat that is already open keeps the plugin version it started with; relaunch the app after updating.
