@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import type { ClaudeSnap, ScanCache } from '../types'
-import { buildView, ctxColor, fableHint, fmtDur, freshestLimits, modelUse, needsScan, paceColor, planFiveHour, windowStarts } from '../hooks/logic'
+import { buildView, ctxColor, fmtDur, freshestLimits, needsScan, paceColor, planFiveHour, windowStarts } from '../hooks/logic'
 
 const NOW = Date.parse('2026-10-04T12:00:00Z')
 const META = { model: 'Opus 5.5', folder: 'my-project' }
@@ -121,8 +121,6 @@ describe('7d plan from 5h windows', () => {
     expect(Math.round(p?.needPct ?? 0)).toBe(80)
     expect(Math.round(p?.target ?? 0)).toBe(90)
     expect(p?.isFeasible).toBe(true)
-    // 40% of the week left, a full 5h window is 20% of it: two full windows' worth
-    expect(p?.fullWindows).toBe(2)
   })
 
   test('infeasible: some of the week expires even maxed out', () => {
@@ -158,27 +156,5 @@ describe('freshest reading per window', () => {
     const r = freshestLimits({ at: 0, limits: [] }, [{ at: NOW - H, limits: [five(5)] }, { at: NOW - 60e3, limits: [week(15)] }])
     expect(r.limits).toEqual([five(5), week(15)])
     expect(r.borrowedAt).toBe(NOW - H)
-  })
-})
-
-describe('per-model readings', () => {
-  const week = (used: number, leftMs: number) => [{ kind: 'seven_day', percentUsed: used, resetsAt: iso(leftMs) }]
-  const models = { fable: { at: NOW - 20 * 60e3, limits: week(4, 13 * H) }, opus: { at: NOW - 5 * 60e3, limits: week(81, 13 * H) } }
-
-  test('on another model with Fable room → Fable first', () => {
-    expect(fableHint(models, 'claude-opus-5-5', NOW)).toBe('Fable has 96% of its own week left — use Fable first (/model)')
-  })
-
-  test('no hint on Fable itself, when Fable is nearly out, or after its week reset', () => {
-    expect(fableHint(models, 'claude-fable-5-1', NOW)).toBe(null)
-    expect(fableHint({ fable: { at: NOW, limits: week(85, 13 * H) } }, 'opus', NOW)).toBe(null)
-    expect(fableHint({ fable: { at: NOW - 2 * H, limits: week(39, -H) } }, 'opus', NOW)).toBe(null)
-  })
-
-  test('lists open weeks with their age and skips junk entries', () => {
-    expect(modelUse({ ...models, junk: { at: 1, limits: 'x' } } as never, NOW)).toEqual([
-      { family: 'fable', used: 4, left: 96, five: undefined, age: '20m' },
-      { family: 'opus', used: 81, left: 19, five: undefined, age: '5m' },
-    ])
   })
 })

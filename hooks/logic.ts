@@ -115,8 +115,6 @@ export type Plan = {
   isFeasible: boolean
   /** Share of the week that expires even with every window maxed, 0-100. */
   wastePct: number
-  /** How many full 5h windows' worth of tokens the rest of the week holds (e.g. 2.1). */
-  fullWindows: number
 }
 
 /**
@@ -142,7 +140,6 @@ export const planFiveHour = (five: WindowStat | undefined, seven: WindowStat | u
     target: isRunning ? five.used + share * (100 - five.used) : undefined,
     isFeasible: left7 <= available,
     wastePct: Math.max(0, left7 - available),
-    fullWindows: left7 / perWindow,
   }
 }
 
@@ -331,32 +328,4 @@ export const freshestLimits = (own: Reading, shared: Reading[]): { limits: Claud
     return theirs.limits.filter(l => l.kind === kind)
   })
   return { limits, borrowedAt }
-}
-
-export type ModelUse = { family: string; used: number; left: number; five?: number; age: string }
-
-/** Each model family's last 7d reading (and its 5h one), while that week is still open. */
-export const modelUse = (models: ModelReadings, now: number): ModelUse[] =>
-  Object.entries(models).flatMap(([name, r]) => {
-    // The file is shared and hand-editable: skip entries that are not readings.
-    const limits = Array.isArray(r?.limits) ? r.limits : []
-    const w = limits.find(l => l.kind === 'seven_day')
-    const reset = toMs(w?.resetsAt)
-    if (!w || !reset || reset <= now) return []
-    const f = limits.find(l => l.kind === 'five_hour')
-    const fiveOpen = f != null && (toMs(f.resetsAt) ?? 0) > now
-    return [{
-      family: name,
-      used: w.percentUsed,
-      left: Math.max(0, 100 - w.percentUsed),
-      five: f ? (fiveOpen ? f.percentUsed : 0) : undefined,
-      age: fmtDur(now - r.at),
-    }]
-  })
-
-/** Fable has a weekly quota of its own: say to use it first while it has room and this chat runs another model. */
-export const fableHint = (models: ModelReadings, current: string, now: number): string | null => {
-  const fable = modelUse(models, now).find(m => m.family === 'fable')
-  if (!fable || fable.left < 20 || family(current) === 'fable') return null
-  return `Fable has ${Math.round(fable.left)}% of its own week left — use Fable first (/model)`
 }

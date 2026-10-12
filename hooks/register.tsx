@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, SessionMeasureInput, SessionUsage } from 'claude-code'
 
-import type { ClaudeSnap, Meta, ModelReadings, ScanCache, ViewMode } from '../types'
-import { barCells, buildView, fableHint, family, fmtDur, freshestLimits, modelUse, needsScan, pct, windowStarts } from './logic'
+import type { ClaudeSnap, Meta, ModelReadings, ScanCache } from '../types'
+import { barCells, buildView, family, fmtDur, freshestLimits, needsScan, pct, windowStarts } from './logic'
 import type { Bar, Plan, View } from './logic'
 
 const PANE = 'usage-band'
@@ -33,7 +33,6 @@ const clockNow = atom({ plugin: 'usage-band', key: 'now' } as const, 0)
 const isHidden = atom({ plugin: 'usage-band', key: 'isHidden' } as const, false)
 const toasted = atom({ plugin: 'usage-band', key: 'toasted' } as const, [])
 const models = atom({ plugin: 'usage-band', key: 'models' } as const, {})
-const viewMode = atom({ plugin: 'usage-band', key: 'view' } as const, 'compact')
 const scanError = atom({ plugin: 'usage-band', key: 'scanError' } as const, null)
 
 type $ = EngineInterface
@@ -141,11 +140,6 @@ async function check($: $) {
   const view = buildView(await read($, claude), await read($, cache), await read($, meta), await $.clock.now())
   const seen = await read($, toasted)
   const fresh = view.urgent.filter(u => !seen.includes(u.key))
-  const hint = fableHint(await read($, models), (await read($, meta)).model, await $.clock.now())
-  if (hint && !seen.includes('fable-hint')) {
-    $.ui.toast(`◆ ${hint}`, { timeoutMs: 10_000 })
-    await update($, toasted, list => [...list, 'fable-hint'].slice(-50))
-  }
   if (!fresh.length) return
   for (const u of fresh) $.ui.toast(u.text, { timeoutMs: 8000 })
   await update($, toasted, list => [...list, ...fresh.map(u => u.key)].slice(-50))
@@ -162,7 +156,12 @@ async function refresh($: $) {
   }
   const shared = await readModels($)
   try {
-    await showReading($, snap(await $.session.usage()), shared)
+    const own = snap(await $.session.usage())
+    // Every chat and model shares one quota, so the newest reading from any chat is the truth:
+    // a chat you switch back to shows that instead of what it saw at its own last reply.
+    const merged = freshestLimits({ at: ownAt, limits: own.rateLimits }, Object.values(shared))
+    const next: ClaudeSnap = { ...own, rateLimits: merged.limits, borrowedAt: merged.borrowedAt }
+    await update($, claude, () => next)
   } catch (err) {
     errors.push(`session.usage: ${errText(err)}`)
   }
@@ -177,22 +176,6 @@ async function refresh($: $) {
   }
   const mine = /^(session\.|refresh:)/
   await update($, scanError, err => (errors.length ? errors.join(' · ') : err && mine.test(err) ? null : err))
-}
-
-// From a Button's onPress (a handler, so it may write): this chat redraws, and new chats start in it.
-async function setView($: $, mode: ViewMode) {
-  await update($, viewMode, () => mode)
-  await $.store.set('view', mode).catch(() => undefined)
-}
-
-// Chats on the same model family share its quota, so the newest reading any of them saw is the truth:
-// a chat you switch back to (or a new one before its first reply) shows that, not an empty or old
-// figure of its own. Families are kept apart because Fable has a weekly quota of its own.
-async function showReading($: $, own: ClaudeSnap, shared?: ModelReadings) {
-  const all = shared ?? (await read($, models))
-  const same = all[family((await read($, meta)).model)]
-  const merged = freshestLimits({ at: ownAt, limits: own.rateLimits }, same ? [same] : [])
-  await update($, claude, () => ({ ...own, rateLimits: merged.limits, borrowedAt: merged.borrowedAt }))
 }
 
 // Reads every atom the drawing depends on (the `now` tick included), so a write to any redraws.
@@ -212,9 +195,6 @@ export const register: Register = on => {
     }
     // Figures first, so the band fills in as soon as it can.
     void refresh($)
-    // The view the person last picked, in any chat.
-    const saved = await $.store.get('view').catch(() => undefined)
-    if (saved === 'mini' || saved === 'compact' || saved === 'full') await update($, viewMode, () => saved)
     // /usage is a built-in, so the command is /quota. A refusal must not stop the band starting.
     try {
       await $.command.register({
@@ -252,8 +232,7 @@ export const register: Register = on => {
       return next(e)
     }
     ensureTicker($)
-    // A measurement before the first reply has no rate limits; it must not wipe a borrowed reading.
-    await showReading($, snap(e))
+    await update($, claude, () => snap(e))
     void maybeScan($).then(() => check($))
 
     return next(e)
@@ -292,7 +271,7 @@ export const register: Register = on => {
       // The terminal keeps the CLI status line's layout; the desktop gets drawn meters.
       if (e.surface === 'desktop') {
         const gui = $.ui.resolve(e)
-        return <gui.Box flexDirection="column">{drawGui(gui, view, error, e.props.bodyColumns, await modelLine($), await read($, viewMode), (mode: ViewMode) => setView($, mode))}</gui.Box>
+        return <gui.Box flexDirection="column">{drawGui(gui, view, error, e.props.bodyColumns, await modelLine($))}</gui.Box>
       }
 
       return <ui.Box flexDirection="column">{drawView(ui, view, error)}</ui.Box>
@@ -337,23 +316,15 @@ const BarRow = (ui: UI, b: Bar) => {
   ]
 }
 
-type ModelLine = { borrowed: string; hint: string | null; families: ReturnType<typeof modelUse>; current: string }
+type ModelLine = { borrowed: string }
 
 // Says when the figures shown were borrowed from another chat's reading.
 async function modelLine($: $): Promise<ModelLine> {
   const borrowedAt = (await read($, claude))?.borrowedAt
-  const now = await $.clock.now()
-  const all = await read($, models)
-  const current = family((await read($, meta)).model)
-  return {
-    borrowed: borrowedAt ? `latest reading ${fmtDur(now - borrowedAt)} ago` : '',
-    hint: fableHint(all, current, now),
-    families: modelUse(all, now),
-    current,
-  }
+  return { borrowed: borrowedAt ? `latest reading ${fmtDur((await $.clock.now()) - borrowedAt)} ago` : '' }
 }
 
-type GUI = Pick<Elements['desktop'], 'Box' | 'Text' | 'Svg' | 'Button'>
+type GUI = Pick<Elements['desktop'], 'Box' | 'Text' | 'Svg'>
 
 const FILL: Record<Bar['color'], string> = { green: '#5fae7b', yellow: '#d9a441', red: '#e5534b', magenta: '#c86fd0' }
 const METER = { width: 84, height: 12 }
@@ -379,30 +350,16 @@ const meterSvg = (b: Bar): string => {
 }
 
 // One quota: `5h [meter] 24%` over its detail line, in a fixed-width cell so cells line up.
-const Meter = (
-  ui: GUI,
-  b: Bar,
-  width: number,
-  label: string,
-  detail: string,
-  labelColor?: string,
-  picture?: { svg: string; value: string; alt: string },
-  detailColor = 'gray',
-) => (
+const Meter = (ui: GUI, b: Bar, width: number, label: string, detail: string, labelColor?: string) => (
   <ui.Box flexDirection="column" width={width} flexShrink={0}>
     <ui.Box flexDirection="row" alignItems="center" columnGap={1}>
       <ui.Box width={4} flexShrink={0}>
-        <ui.Text bold color={labelColor} wrap="truncate-end">{label}</ui.Text>
+        <ui.Text bold color={labelColor}>{label}</ui.Text>
       </ui.Box>
-      <ui.Svg
-        source={picture?.svg ?? meterSvg(b)}
-        alt={picture?.alt ?? `${label} ${Math.round(b.used)}% used`}
-        width={METER.width}
-        height={METER.height}
-      />
-      <ui.Text bold>{picture?.value ?? `${Math.round(b.used)}%`}</ui.Text>
+      <ui.Svg source={meterSvg(b)} alt={`${label} ${Math.round(b.used)}% used`} width={METER.width} height={METER.height} />
+      <ui.Text bold>{`${Math.round(b.used)}%`}</ui.Text>
     </ui.Box>
-    <ui.Text color={detailColor} wrap="truncate-end">{detail}</ui.Text>
+    <ui.Text color="gray" wrap="truncate-end">{detail}</ui.Text>
   </ui.Box>
 )
 
@@ -413,62 +370,10 @@ const planText = (p: Plan): string => {
     : `7d plan: max out every 5h window (${n}) · ~${Math.round(p.wastePct)}% of the week still expires`
 }
 
-// One pip per 5h window left before the weekly reset, as wide as a meter; filled = full windows' worth
-// of the week left to spend.
-const pipsSvg = (windows: number, full: number, isFeasible: boolean): string => {
-  const n = Math.max(1, Math.min(24, windows))
-  const { width: w, height: h } = METER
-  const gap = n > 12 ? 1 : 2
-  const pip = (w - gap * (n - 1)) / n
-  const color = isFeasible ? '#d97757' : '#e5534b'
-  const cells = Array.from({ length: n }, (_, i) => {
-    const x = (i * (pip + gap)).toFixed(1)
-    const fill = isFeasible ? Math.max(0, Math.min(1, full - i)) : 1
-    return (
-      `<rect x="${x}" y="3" width="${pip.toFixed(1)}" height="6" rx="2" fill="#888" fill-opacity="0.3"/>` +
-      (fill > 0 ? `<rect x="${x}" y="3" width="${(pip * fill).toFixed(1)}" height="6" rx="2" fill="${color}"/>` : '')
-    )
-  })
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${cells.join('')}</svg>`
-}
-
-const ViewButtons = (ui: GUI, mode: ViewMode, pick: (mode: ViewMode) => void) => (
-  <ui.Box flexDirection="row" columnGap={1} flexShrink={0}>
-    {mode === 'full' ? (
-      <ui.Button key="less" label="▴" plain dimColor onPress={() => pick('compact')} />
-    ) : (
-      <ui.Button key="more" label="▾" plain dimColor onPress={() => pick('full')} />
-    )}
-    <ui.Button key="collapse" label="–" plain dimColor onPress={() => pick('mini')} />
-  </ui.Box>
-)
-
-const drawGui = (
-  ui: GUI,
-  view: View,
-  error: string | null,
-  columns: number,
-  byModel: ModelLine,
-  mode: ViewMode,
-  pick: (mode: ViewMode) => void,
-) => {
-  const { Box, Text, Svg } = ui
+const drawGui = (ui: GUI, view: View, error: string | null, columns: number, byModel: ModelLine) => {
+  const { Box, Text } = ui
   const codex = view.rows.map(r => r.right).find(r => r?.kind === 'codex')
   const codexBars = view.rows.flatMap(r => (r.right?.kind === 'bar' ? [r.right] : []))
-
-  // Collapsed: one line, the figures that matter, a click away from the rest.
-  if (mode === 'mini') {
-    const pcts = view.rows
-      .flatMap(r => (r.left && r.left.label !== 'ctx' ? [`${r.left.label} ${Math.round(r.left.used)}%`] : []))
-      .join(' · ')
-    return [
-      <Box flexDirection="row" columnGap={GAP}>
-        <ui.Button key="expand" label={`◆ ${pcts || 'usage'}  ▸`} plain dimColor onPress={() => pick('compact')} />
-        {(view.status.kind === 'urgent' || view.status.kind === 'nudge') && statusText(ui, view)}
-      </Box>,
-    ]
-  }
-
   const head = [view.model, view.folder, view.cost?.replace('session ', '')].filter(Boolean).join('  ·  ')
   const claudeDetail = (b: Bar) =>
     b.label === 'ctx'
@@ -476,20 +381,17 @@ const drawGui = (
       : [b.tok && (b.cap ? `${b.tok} / ${b.cap}` : b.tok), b.resets ? `${b.resets} left` : 'reset'].filter(Boolean).join(' · ')
   const count = view.rows.filter(r => r.left).length + codexBars.length
   // All meters on one row when the band is wide enough for it, else a two-column grid.
-  const oneRow = Math.floor((columns - GAP * (Math.max(4, count) - 1)) / Math.max(4, count))
+  const oneRow = Math.floor((columns - GAP * (count - 1)) / Math.max(1, count))
   const width = oneRow >= 20 ? Math.min(oneRow, 30) : Math.max(20, Math.min(30, Math.floor((columns - GAP) / 2)))
 
-  const rows = [
-    <Box flexDirection="row" justifyContent="space-between" columnGap={GAP}>
-      <Box flexDirection="row" flexWrap="wrap" columnGap={GAP} flexShrink={1}>
-        <Text color="gray">{head}</Text>
-        {statusText(ui, view)}
-        {byModel.borrowed && <Text color="gray" dimColor>{byModel.borrowed}</Text>}
-        {mode === 'compact' && view.plan && (
-          <Text color={!view.plan.isFeasible ? 'red' : view.plan.needPct >= 75 ? 'yellow' : 'gray'}>{planText(view.plan)}</Text>
-        )}
-      </Box>
-      {ViewButtons(ui, mode, pick)}
+  return [
+    <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
+      <Text color="gray">{head}</Text>
+      {statusText(ui, view)}
+      {byModel.borrowed && <Text color="gray" dimColor>{byModel.borrowed}</Text>}
+      {view.plan && (
+        <Text color={!view.plan.isFeasible ? 'red' : view.plan.needPct >= 75 ? 'yellow' : 'gray'}>{planText(view.plan)}</Text>
+      )}
     </Box>,
     <Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>
       {view.rows.flatMap(r => (r.left ? [Meter(ui, r.left, width, r.left.label, claudeDetail(r.left))] : []))}
@@ -498,52 +400,8 @@ const drawGui = (
           Meter(ui, b, width, `◇ ${b.label}`, `Codex ${codex.seen} ago · ${b.resets ? `${b.resets} left` : 'reset'}`, 'green'),
         )}
     </Box>,
+    ...(error ? [<Text color="yellow" dimColor>{`usage-band: ${error}`}</Text>] : []),
   ]
-
-  // Expanded: one more row of the same cells, the 5h plan counter and the other models' weeks.
-  if (mode === 'full') {
-    const cells = []
-    const plan = view.plan
-    if (plan) {
-      const tone = !plan.isFeasible ? 'red' : plan.needPct >= 75 ? 'yellow' : 'gray'
-      cells.push(
-        Meter(
-          ui,
-          { label: 'plan', used: 0, color: 'green', width: 0, extra: '' },
-          width,
-          'plan',
-          plan.isFeasible ? `full 5h windows of week to spend` : `~${Math.round(plan.wastePct)}% of the week will expire`,
-          undefined,
-          {
-            svg: pipsSvg(plan.windows, plan.fullWindows, plan.isFeasible),
-            value: `${plan.fullWindows < 10 ? plan.fullWindows.toFixed(1) : Math.round(plan.fullWindows)}/${plan.windows}`,
-            alt: `${plan.fullWindows.toFixed(1)} full 5h windows of the week left to spend, ${plan.windows} windows before the reset`,
-          },
-          tone,
-        ),
-      )
-    }
-    for (const m of byModel.families.filter(f => f.family !== byModel.current)) {
-      const isFable = m.family === 'fable'
-      const hint = isFable && byModel.hint
-      cells.push(
-        Meter(
-          ui,
-          { label: m.family, used: m.used, color: m.used >= 90 ? 'red' : 'green', width: 0, extra: '' },
-          width,
-          m.family.slice(0, 5),
-          hint ? 'use Fable first (/model)' : `${m.five != null ? `5h ${Math.round(m.five)}% · ` : ''}${m.age} ago`,
-          isFable ? 'magenta' : undefined,
-          undefined,
-          hint ? 'magenta' : 'gray',
-        ),
-      )
-    }
-    if (cells.length) rows.push(<Box flexDirection="row" flexWrap="wrap" columnGap={GAP}>{cells}</Box>)
-  }
-
-  if (error) rows.push(<Text color="yellow" dimColor>{`usage-band: ${error}`}</Text>)
-  return rows
 }
 
 const statusText = (ui: UI, view: View) => {
