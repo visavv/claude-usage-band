@@ -127,8 +127,8 @@ test('a newer reading from another chat replaces a stale one, and a redraw refre
   on('session.usage', () => (usageReads++, {
     value: { startedAt: NOW - 5 * H, context: { window: 200_000 }, rateLimits: [{ kind: 'seven_day', percentUsed: 10, resetsAt: new Date(NOW + 84 * H).toISOString() }] },
   }))
-  // Another chat saw 40% two minutes ago.
-  const MODELS = { sonnet: { at: NOW - 2 * 60e3, limits: [{ kind: 'seven_day', percentUsed: 40, resetsAt: new Date(NOW + 84 * H).toISOString() }] } }
+  // Another Opus chat saw 40% two minutes ago; a Fable chat's week is its own and must not leak in.
+  const MODELS = { fable: { at: NOW - 60e3, limits: [{ kind: 'seven_day', percentUsed: 3, resetsAt: new Date(NOW + 84 * H).toISOString() }] }, opus: { at: NOW - 2 * 60e3, limits: [{ kind: 'seven_day', percentUsed: 40, resetsAt: new Date(NOW + 84 * H).toISOString() }] } }
   on('fs.read', (_, e) => ({ value: JSON.stringify(e.path.endsWith('usage-band-models.json') ? MODELS : CACHE) }))
   on('fs.write', () => ({ value: undefined }))
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
@@ -178,4 +178,36 @@ test('an error left by a failed refresh clears once a refresh succeeds', async (
   failModel = false
   await clock.advance(15_000)
   expect(await draw()).not.toContain('usage-band: session.model/cwd')
+})
+
+test('a measurement before the first reply keeps the reading borrowed from a chat on the same model', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'quota' } }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.cwd', () => ({ value: CWD }))
+  on('env.get', () => ({ value: undefined }))
+  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200_000 }, rateLimits: [] } }))
+  const MODELS = {
+    fable: { at: NOW - 60e3, limits: [{ kind: 'seven_day', percentUsed: 5, resetsAt: new Date(NOW + 30 * H).toISOString() }] },
+    opus: { at: NOW - 2 * 60e3, limits: [{ kind: 'seven_day', percentUsed: 81, resetsAt: new Date(NOW + 30 * H).toISOString() }] },
+  }
+  on('fs.read', (_, e) => ({ value: JSON.stringify(e.path.endsWith('usage-band-models.json') ? MODELS : CACHE) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+
+  await $.session.start({ cwd: CWD, surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  await $.session.measure({ context: { window: 200_000, tokens: 9_000, percent: 5 }, rateLimits: [], changed: ['context'] })
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+  await ui.unmount()
+  // the Opus week from the other Opus chat, never Fable's 5%
+  expect(text).toContain('7d81%')
+  expect(text).not.toContain('7d5%')
+  expect(text).not.toContain('waiting for first API response')
 })

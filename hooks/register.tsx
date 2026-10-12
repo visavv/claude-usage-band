@@ -156,12 +156,7 @@ async function refresh($: $) {
   }
   const shared = await readModels($)
   try {
-    const own = snap(await $.session.usage())
-    // Every chat and model shares one quota, so the newest reading from any chat is the truth:
-    // a chat you switch back to shows that instead of what it saw at its own last reply.
-    const merged = freshestLimits({ at: ownAt, limits: own.rateLimits }, Object.values(shared))
-    const next: ClaudeSnap = { ...own, rateLimits: merged.limits, borrowedAt: merged.borrowedAt }
-    await update($, claude, () => next)
+    await showReading($, snap(await $.session.usage()), shared)
   } catch (err) {
     errors.push(`session.usage: ${errText(err)}`)
   }
@@ -176,6 +171,16 @@ async function refresh($: $) {
   }
   const mine = /^(session\.|refresh:)/
   await update($, scanError, err => (errors.length ? errors.join(' · ') : err && mine.test(err) ? null : err))
+}
+
+// Chats on the same model family share its quota, so the newest reading any of them saw is the truth:
+// a chat you switch back to (or a new one before its first reply) shows that, not an empty or old
+// figure of its own. Families are kept apart because Fable has a weekly quota of its own.
+async function showReading($: $, own: ClaudeSnap, shared?: ModelReadings) {
+  const all = shared ?? (await read($, models))
+  const same = all[family((await read($, meta)).model)]
+  const merged = freshestLimits({ at: ownAt, limits: own.rateLimits }, same ? [same] : [])
+  await update($, claude, () => ({ ...own, rateLimits: merged.limits, borrowedAt: merged.borrowedAt }))
 }
 
 // Reads every atom the drawing depends on (the `now` tick included), so a write to any redraws.
@@ -232,7 +237,7 @@ export const register: Register = on => {
       return next(e)
     }
     ensureTicker($)
-    await update($, claude, () => snap(e))
+    await showReading($, snap(e))
     void maybeScan($).then(() => check($))
 
     return next(e)
