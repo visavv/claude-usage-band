@@ -45,7 +45,8 @@ const snap = (u: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>): ClaudeS
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-let isScanning = false
+// When the running scan started (0: none). A number, not a flag, so a scan that never ends can expire.
+let scanStartedAt = 0
 let ticker: { cancel: () => void } | null = null
 // When this chat last got a reading of its own (0: none since load).
 let ownAt = 0
@@ -115,13 +116,19 @@ async function readMeta($: $) {
 
 // Runs usage-scan.js the way statusline.js does, without holding anything up.
 async function maybeScan($: $) {
-  if (isScanning) return
+  const now = await $.clock.now()
+  // A scan that never reported back must not block every later one: give up on it after 3 minutes.
+  if (scanStartedAt && now - scanStartedAt < 180_000) return
+  if (scanStartedAt) {
+    await update($, scanError, () => 'usage-scan.js did not finish within 3 minutes; trying again')
+  }
   const starts = windowStarts((await read($, claude))?.rateLimits ?? [])
-  if (!needsScan(await read($, cache), starts, await $.clock.now())) return
-  isScanning = true
+  if (!needsScan(await read($, cache), starts, now)) return
   const p = await where($)
   // No shell: argv only, and every argument is a label and a whole number.
   const argv = ['node', p.scan, `--out=${p.cache}`, `--codex=${p.codexHome}`, ...Object.entries(starts).map(([k, v]) => `${k}=${Math.round(v)}`)]
+  const started = now
+  scanStartedAt = started
   void $.process.run(argv, { timeoutMs: 120_000 })
     .then(async r => {
       const failure = r.exitCode === 0 ? null : `usage-scan.js exited ${r.exitCode}: ${r.stderr.trim().slice(0, 200)}`
@@ -129,7 +136,7 @@ async function maybeScan($: $) {
     })
     .catch(err => update($, scanError, () => `run node usage-scan.js: ${errText(err)}`))
     .finally(async () => {
-      isScanning = false
+      if (scanStartedAt === started) scanStartedAt = 0
       await readCache($)
       await check($)
     })

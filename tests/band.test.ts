@@ -211,3 +211,34 @@ test('a measurement before the first reply keeps the reading borrowed from a cha
   expect(text).not.toContain('7d5%')
   expect(text).not.toContain('waiting for first API response')
 })
+
+test('a scan that never finishes stops blocking later scans after 3 minutes', async ($, on) => {
+  const clock = mock.clock(on, { now: NOW })
+  let runs = 0
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('command.register', () => ({ value: { command: 'quota' } }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.cwd', () => ({ value: CWD }))
+  on('env.get', () => ({ value: undefined }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: NOW - H,
+      context: { window: 200_000 },
+      rateLimits: [{ kind: 'seven_day', percentUsed: 50, resetsAt: new Date(NOW + 84 * H).toISOString() }],
+    },
+  }))
+  // an old cache, so every refresh wants a scan
+  on('fs.read', () => ({ value: JSON.stringify({ ...CACHE, at: NOW - 10 * H }) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  // the process never reports back
+  on('process.run', () => (runs++, new Promise(() => {})))
+
+  await $.session.start({ cwd: CWD, surface: 'desktop', isInteractive: true })
+  await clock.settle()
+  expect(runs).toBe(1)
+  await clock.advance(60_000)
+  expect(runs).toBe(1)
+  await clock.advance(150_000)
+  expect(runs).toBe(2)
+})
