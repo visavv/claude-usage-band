@@ -197,14 +197,10 @@ async function currentView($: $): Promise<View> {
 }
 
 export const register: Register = on => {
-  // Headless runs (`claude -p`, scripts, tests) draw nothing: no scans, timers or toasts there.
-  let isHeadless = false
-
+  // No "headless" shortcut here: the desktop app runs its chats through the SDK, which reports
+  // isInteractive false exactly like `claude -p`, and skipping work there left every desktop band
+  // stuck on "waiting for first API response".
   on('session.start', async ($, e, next) => {
-    isHeadless = !e.isInteractive
-    if (isHeadless) {
-      return next(e)
-    }
     // Figures first, so the band fills in as soon as it can.
     void refresh($)
     // /usage is a built-in, so the command is /quota. A refusal must not stop the band starting.
@@ -226,9 +222,6 @@ export const register: Register = on => {
 
   // Fallback in case session.start's refresh never landed: every prompt re-reads.
   on('prompt.submit', async ($, e, next) => {
-    if (isHeadless) {
-      return next(e)
-    }
     ensureTicker($)
     void refresh($)
 
@@ -236,13 +229,9 @@ export const register: Register = on => {
   })
 
   on('session.measure', async ($, e: SessionMeasureInput, next) => {
-    // Even a headless run's reading is worth sharing with the open chats; nothing else runs there.
     await readMeta($)
-    if (!isHeadless && e.rateLimits.length) ownAt = await $.clock.now()
+    if (e.rateLimits.length) ownAt = await $.clock.now()
     await recordModel($, snap(e).rateLimits)
-    if (isHeadless) {
-      return next(e)
-    }
     ensureTicker($)
     await showReading($, snap(e))
     void maybeScan($).then(() => check($))
@@ -252,7 +241,7 @@ export const register: Register = on => {
 
   // The desktop attached to this chat (opened it, or came back to it): re-read at once.
   on('session.attach', async ($, e, next) => {
-    if (!isHeadless) void kick($)
+    void kick($)
 
     return next(e)
   })

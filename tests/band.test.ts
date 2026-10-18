@@ -95,23 +95,33 @@ test('a chat with no reading of its own shows the shared one', async ($, on) => 
   expect(text).toContain('7d15%')
 })
 
-test('a headless run starts no scan, timer or load log', async ($, on) => {
+test('a desktop chat, which the SDK reports as not interactive, still fills its band', async ($, on) => {
   const clock = mock.clock(on, { now: NOW })
-  const calls: string[] = []
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'quota' } }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.cwd', () => ({ value: CWD }))
   on('env.get', () => ({ value: undefined }))
-  on('session.id', () => ({ value: 'headless' }))
-  on('session.usage', () => ({ value: { startedAt: NOW, context: { window: 200_000 }, rateLimits: [] } }))
-  on('fs.read', (_, e) => (calls.push(`read ${e.path}`), { value: JSON.stringify(CACHE) }))
-  on('fs.write', (_, e) => (calls.push(`write ${e.path}`), { value: undefined }))
-  on('process.run', () => (calls.push('process.run'), { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: NOW - H,
+      context: { window: 200_000, tokens: 84_000, percent: 42 },
+      rateLimits: [{ kind: 'seven_day', percentUsed: 81, resetsAt: new Date(NOW + 30 * H).toISOString() }],
+    },
+  }))
+  on('fs.read', () => ({ value: JSON.stringify(CACHE) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
 
   await $.session.start({ cwd: CWD, surface: null, isInteractive: false })
-  await clock.advance(60_000)
-  expect(calls).toEqual([])
+  await clock.settle()
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const text = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+  await ui.unmount()
+  expect(text).toContain('ctx42%')
+  expect(text).toContain('7d81%')
+  expect(text).not.toContain('waiting for first API response')
 })
 
 test('a newer reading from another chat replaces a stale one, and a redraw refreshes', async ($, on) => {
