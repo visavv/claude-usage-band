@@ -52,8 +52,10 @@ let ticker: { cancel: () => void } | null = null
 let ownAt = 0
 // When a drawing or an attach last asked for a refresh; keeps redraws from flooding it.
 let lastKick = 0
-// Set by ensureTicker; what a drawing calls to ask for a refresh (null until a non-render event ran).
-let refreshSoon: (() => void) | null = null
+// Set by a drawing that wants fresh figures; a timer started outside any drawing acts on it.
+// (A drawing must never start the refresh itself: the engine counts every write that a timer
+// scheduled during a ui.render makes as part of the drawing, and refuses it.)
+let wantsRefresh = false
 
 async function readCache($: $) {
   try {
@@ -104,8 +106,12 @@ async function kick($: $) {
 function ensureTicker($: $) {
   if (ticker) return
   ticker = $.clock.every(15_000, () => void refresh($))
-  // Bound to this event's $, never a drawing's: the engine refuses writes that a ui.render started.
-  refreshSoon = () => void $.clock.after(0, () => void kick($))
+  // Checks the drawing's request every 2 s; costs nothing unless a redraw asked.
+  $.clock.every(2_000, () => {
+    if (!wantsRefresh) return
+    wantsRefresh = false
+    void kick($)
+  })
 }
 
 async function readMeta($: $) {
@@ -263,7 +269,7 @@ export const register: Register = on => {
       return next(e)
     }
     // A drawing may not write state, so the refresh runs on the clock right after it.
-    if ((await $.clock.now()) - lastKick >= 5_000) refreshSoon?.()
+    if ((await $.clock.now()) - lastKick >= 5_000) wantsRefresh = true
     const ui = $.ui.resolve(e)
     // A failure while drawing must show as a line, never as a missing band.
     try {

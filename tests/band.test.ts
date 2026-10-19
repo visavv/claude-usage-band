@@ -158,7 +158,8 @@ test('a newer reading from another chat replaces a stale one, and a redraw refre
   const before = usageReads
   await clock.advance(6_000)
   await draw()
-  await clock.advance(1)
+  // the drawing only asks; the 2 s check outside the drawing does the refresh
+  await clock.advance(2_000)
   expect(usageReads).toBeGreaterThan(before)
 })
 
