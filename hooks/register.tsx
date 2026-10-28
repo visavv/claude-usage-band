@@ -3,7 +3,7 @@ import type { Elements, EngineInterface, Register, SessionMeasureInput, SessionU
 
 import type { ClaudeSnap, Meta, ModelReadings, ScanCache } from '../types'
 import { barCells, buildView, family, fmtDur, freshestLimits, needsScan, pct, windowStarts } from './logic'
-import type { Bar, Plan, View } from './logic'
+import type { Bar, Plan, View, ViewOptions } from './logic'
 
 const PANE = 'usage-band'
 
@@ -114,6 +114,13 @@ function ensureTicker($: $) {
   })
 }
 
+// USAGE_BAND_CODEX=front-load: see ViewOptions in logic.ts.
+let viewOptions: ViewOptions | null = null
+async function options($: $): Promise<ViewOptions> {
+  if (!viewOptions) viewOptions = { codexFrontLoad: ((await $.env.get('USAGE_BAND_CODEX')) ?? '').trim().toLowerCase() === 'front-load' }
+  return viewOptions
+}
+
 async function readMeta($: $) {
   const [model, cwd] = await Promise.all([$.session.model(), $.session.cwd()])
   const next: Meta = { model, folder: cwd.split(/[\\/]/).filter(Boolean).pop() ?? '' }
@@ -150,7 +157,7 @@ async function maybeScan($: $) {
 
 // Toasts each window once, the first time it turns urgent.
 async function check($: $) {
-  const view = buildView(await read($, claude), await read($, cache), await read($, meta), await $.clock.now())
+  const view = buildView(await read($, claude), await read($, cache), await read($, meta), await $.clock.now(), await options($))
   const seen = await read($, toasted)
   const fresh = view.urgent.filter(u => !seen.includes(u.key))
   if (!fresh.length) return
@@ -199,7 +206,7 @@ async function showReading($: $, own: ClaudeSnap, shared?: ModelReadings) {
 // Reads every atom the drawing depends on (the `now` tick included), so a write to any redraws.
 async function currentView($: $): Promise<View> {
   await read($, clockNow)
-  return buildView(await read($, claude), await read($, cache), await read($, meta), await $.clock.now())
+  return buildView(await read($, claude), await read($, cache), await read($, meta), await $.clock.now(), await options($))
 }
 
 export const register: Register = on => {
@@ -404,7 +411,7 @@ const drawGui = (ui: GUI, view: View, error: string | null, columns: number, byM
       {view.rows.flatMap(r => (r.left ? [Meter(ui, r.left, width, r.left.label, claudeDetail(r.left))] : []))}
       {codex?.kind === 'codex' &&
         codexBars.map(b =>
-          Meter(ui, b, width, `◇ ${b.label}`, `Codex ${codex.seen} ago · ${b.resets ? `${b.resets} left` : 'reset'}`, 'green'),
+          Meter(ui, b, width, `◇ ${b.label}`, `Codex ${codex.seen} ago · ${b.age ? `week ${b.age} old` : b.resets ? `${b.resets} left` : 'reset'}`, 'green'),
         )}
     </Box>,
     ...(error ? [<Text color="yellow" dimColor>{`usage-band: ${error}`}</Text>] : []),

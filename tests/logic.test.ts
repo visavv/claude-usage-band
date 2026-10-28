@@ -158,3 +158,39 @@ describe('freshest reading per window', () => {
     expect(r.borrowedAt).toBe(NOW - H)
   })
 })
+
+describe('front-loaded Codex (USAGE_BAND_CODEX=front-load)', () => {
+  // Claude on pace; Codex 7d window started 2 h ago (6d22h left) with 3% used.
+  const codexCache = (usedPct: number, leftMs: number): ScanCache => ({
+    at: NOW,
+    codex: { at: NOW - 9 * 60e3, plan: 'prolite', windows: [{ used_percent: usedPct, window_minutes: 10080, resets_at: (NOW + leftMs) / 1000 }] },
+  })
+  const onPace = snap(50, 2.5 * H, 50, 84 * H)
+
+  test('a fresh week says to spend it first, shows its age and no countdown', () => {
+    const v = buildView(onPace, codexCache(3, 166 * H), META, NOW, { codexFrontLoad: true })
+    expect(v.status).toEqual({ kind: 'nudge', text: '◇ Fresh Codex week (2h00m old, 3% used) — spend it first' })
+    const bar = v.rows.map(r => r.right).find(r => r?.kind === 'bar')
+    expect(bar?.kind === 'bar' && bar.extra).toBe('  week 2h00m old')
+    expect(bar?.kind === 'bar' && bar.elapsed).toBe(undefined)
+  })
+
+  test('an old, barely used week gets no end-of-week warning or pace colour', () => {
+    const v = buildView(onPace, codexCache(3, 20 * H), META, NOW, { codexFrontLoad: true })
+    expect(v.status.kind).toBe('ok')
+    expect(v.urgent.length).toBe(0)
+    const bar = v.rows.map(r => r.right).find(r => r?.kind === 'bar')
+    expect(bar?.kind === 'bar' && bar.color).toBe('green')
+  })
+
+  test('a Claude 🔥 still wins over a fresh Codex week', () => {
+    const v = buildView(snap(30, 70 * 60e3, 50, 84 * H), codexCache(3, 166 * H), META, NOW, { codexFrontLoad: true })
+    expect(v.status.kind).toBe('urgent')
+  })
+
+  test('without the option Codex is paced over 7 days as before', () => {
+    const v = buildView(onPace, codexCache(3, 20 * H), META, NOW)
+    expect(v.status.kind).toBe('urgent')
+    expect(v.status.text).toContain('Codex: 97% of 7d quota expires in 20h00m')
+  })
+})

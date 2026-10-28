@@ -87,6 +87,7 @@ To try it in one session only: `claude --plugin-dir ~/.claude/mods/usage-band`.
 | `/quota hide`, `/quota show` | Hide or show the band |
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its data (default `~/.claude`); the transcripts are read from here and the two state files are written here |
 | `CODEX_HOME` | Where Codex keeps its data (default `~/.codex`) |
+| `USAGE_BAND_CODEX=front-load` | For accounts whose Codex week is often reset early (check your Codex logs: a new week starting before the last one's reset time). Codex then gets no end-of-week warnings or pace colours, shows the week's age (`week 2h old`) instead of a reset countdown, and while a week is under a day old and under 50% used the status says "◇ Fresh Codex week … spend it first". A Claude 🔥 warning still comes first. |
 
 ### Optional: the same view as a CLI status line
 

@@ -23,6 +23,8 @@ export type Bar = {
   elapsed?: number
   /** True while this window is the 🔥 kind: quota left and the reset close. */
   isUrgent?: boolean
+  /** Front-loaded Codex: how old the week is, shown instead of the reset countdown. */
+  age?: string
   /** Where `used` must end this window to stay on the 7d plan, 0-100. */
   target?: number
 }
@@ -145,11 +147,23 @@ export const planFiveHour = (five: WindowStat | undefined, seven: WindowStat | u
 
 type Nudge = { score: number; msg: string; urgent: boolean }
 
+/**
+ * `codexFrontLoad`: for accounts whose Codex week is often reset early (seen: about every 1-2 days),
+ * pacing a Codex window over 7 days wastes it. Codex then gets no end-of-week warnings or pace colours,
+ * shows the week's age instead of a reset countdown, and says to spend a fresh week first.
+ */
+export type ViewOptions = { codexFrontLoad?: boolean }
+
+/** A Codex week counts as fresh for this long, and is worth spending until this share is used. */
+export const FRESH_MS = 24 * 3600e3
+export const FRESH_USED = 50
+
 export const buildView = (
   claude: ClaudeSnap | null,
   cache: ScanCache | null,
   meta: Meta,
   now: number,
+  options: ViewOptions = {},
 ): View => {
   const limits = claude?.rateLimits ?? []
   const starts = windowStarts(limits)
@@ -158,7 +172,7 @@ export const buildView = (
   let nudge: Nudge | null = null
   const urgent: Urgent[] = []
 
-  const analyze = (label: string, usedPct: unknown, resetsAt: unknown, len: number, who: string) => {
+  const analyze = (label: string, usedPct: unknown, resetsAt: unknown, len: number, who: string, quiet = false) => {
     let used = Number(usedPct ?? 0)
     const reset = toMs(resetsAt)
     let msLeft: number | null = reset ? reset - now : null
@@ -170,10 +184,11 @@ export const buildView = (
     const left = Math.max(0, 100 - used)
     const elapsedFrac = msLeft != null ? Math.min(1, Math.max(0, 1 - msLeft / len)) : null
     const behind = elapsedFrac != null ? elapsedFrac * 100 - used : 0
-    const col = paceColor(used, behind)
+    // quiet: no pace colour and no end-of-week warnings (front-loaded Codex)
+    const col = quiet ? paceColor(used, 0) : paceColor(used, behind)
     let isUrgent = false
 
-    if (msLeft != null && left >= 20) {
+    if (!quiet && msLeft != null && left >= 20) {
       const urgentWindow = label === '5h' ? msLeft < 90 * 60e3 : msLeft < 36 * 3600e3
       const score = behind + (urgentWindow ? 50 : 0)
       const msg = urgentWindow
@@ -247,7 +262,17 @@ export const buildView = (
     rows[0]!.right = { kind: 'codex', plan: cx.plan ?? '', seen: fmtDur(now - cx.at) }
     for (const w of cx.windows ?? []) {
       const label = w.window_minutes === 300 ? '5h' : w.window_minutes === 10080 ? '7d' : `${w.window_minutes}m`
-      const a = analyze(label, w.used_percent, w.resets_at, w.window_minutes * 60e3, 'Codex: ')
+      const len = w.window_minutes * 60e3
+      const frontLoad = !!options.codexFrontLoad
+      const a = analyze(label, w.used_percent, w.resets_at, len, 'Codex: ', frontLoad)
+      const ageMs = a.msLeft != null ? Math.max(0, len - a.msLeft) : null
+      // A fresh Codex week is the first thing to spend (below a Claude 🔥 and the switch hint).
+      if (frontLoad && ageMs != null && ageMs < FRESH_MS && a.used < FRESH_USED) {
+        const before: Nudge | null = nudge
+        if (!before?.urgent && (before?.score ?? 0) < 900) {
+          nudge = { score: 900, msg: `◇ Fresh Codex week (${fmtDur(ageMs)} old, ${Math.round(a.used)}% used) — spend it first`, urgent: false }
+        }
+      }
       // Out of Claude quota but Codex has room → suggest switching.
       const current: Nudge | null = nudge
       if ((claudeLeft[label] ?? 100) < 10 && a.left >= 20 && !current?.urgent) {
@@ -265,9 +290,10 @@ export const buildView = (
         used: a.used,
         color: a.col,
         width: CBAR,
-        extra: a.msLeft != null ? `  resets in ${fmtDur(a.msLeft)}` : '  reset',
+        extra: frontLoad && ageMs != null ? `  week ${fmtDur(ageMs)} old` : a.msLeft != null ? `  resets in ${fmtDur(a.msLeft)}` : '  reset',
         resets: a.msLeft != null ? fmtDur(a.msLeft) : undefined,
-        elapsed: a.elapsed,
+        age: frontLoad && ageMs != null ? fmtDur(ageMs) : undefined,
+        elapsed: frontLoad ? undefined : a.elapsed,
         isUrgent: a.isUrgent,
       }
     }
